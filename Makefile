@@ -69,14 +69,26 @@ $(SQLITE_OUT)/sqlite3.o : $(SQLITE_UNPACKED)
 	perl -p -e "s/sqlite3_api;/sqlite3_api = 0;/g" \
 	    $(SQLITE_SOURCE)/sqlite3ext.h > $(SQLITE_OUT)/sqlite3ext.h
 # insert a code for loading extension functions
-	perl -p -e "s/^opendb_out:/  if(!db->mallocFailed && rc==SQLITE_OK){ rc = RegisterExtensionFunctions(db); }\nopendb_out:/;" \
+	perl -p -e "s/^opendb_out:/  if(!db->mallocFailed && rc==SQLITE_OK){ rc = sqlite3_madras_init(db, 0, &sqlite3Apis); rc = RegisterExtensionFunctions(db); }\nopendb_out:/;" \
 	    $(SQLITE_SOURCE)/sqlite3.c > $(SQLITE_OUT)/sqlite3.c.tmp
 # register compile option 'JDBC_EXTENSIONS'
 # limits defined here: https://www.sqlite.org/limits.html
 	perl -p -e "s/^(static const char \* const sqlite3azCompileOpt.+)$$/\1\n\n\/* This has been automatically added by sqlite-jdbc *\/\n  \"JDBC_EXTENSIONS\",/;" \
 	    $(SQLITE_OUT)/sqlite3.c.tmp > $(SQLITE_OUT)/sqlite3.c
+	cp src/main/ext/madras_dv1.hpp $(SQLITE_OUT)
+	cp src/main/ext/madras_c_stubs.h $(SQLITE_OUT)
+	cp src/main/ext/madras_sql_dv1.cpp $(SQLITE_OUT)
+#	yum clean all
+#	echo "http://vault.centos.org/5.11/os/x86_64/" > /var/cache/yum/base/mirrorlist.txt
+#	echo "http://vault.centos.org/5.11/extras/x86_64/" > /var/cache/yum/extras/mirrorlist.txt
+#	echo "http://vault.centos.org/5.11/updates/x86_64/" > /var/cache/yum/updates/mirrorlist.txt
+#	yum update -y
+#	yum -y install gcc-c++
+	$(CPP) -std=c++11 -g -fPIC -o $(SQLITE_OUT)/madras_sql_dv1.o -c $(CCFLAGS) \
+	    $(SQLITE_OUT)/madras_sql_dv1.cpp -mpopcnt -mbmi2 -lstdc++
 	cat src/main/ext/*.c >> $(SQLITE_OUT)/sqlite3.c
-	$(CC) -o $@ -c $(CCFLAGS) \
+	$(CC) -g -o $@ -c $(CCFLAGS) \
+          -DCOMPILE_SQLITE_EXTENSIONS_AS_LOADABLE_MODULE \
 	    -DSQLITE_ENABLE_LOAD_EXTENSION=1 \
 	    -DSQLITE_HAVE_ISNAN \
 	    -DHAVE_USLEEP=1 \
@@ -108,8 +120,8 @@ $(SQLITE_SOURCE)/sqlite3.h: $(SQLITE_UNPACKED)
 
 $(SQLITE_OUT)/$(LIBNAME): $(SQLITE_HEADER) $(SQLITE_OBJ) $(SRC)/org/sqlite/core/NativeDB.c $(TARGET)/common-lib/NativeDB.h
 	@mkdir -p $(@D)
-	$(CC) $(CCFLAGS) -I $(TARGET)/common-lib -c -o $(SQLITE_OUT)/NativeDB.o $(SRC)/org/sqlite/core/NativeDB.c
-	$(CC) $(CCFLAGS) -o $@ $(SQLITE_OUT)/NativeDB.o $(SQLITE_OBJ) $(LINKFLAGS)
+	$(CC) $(CCFLAGS) -I $(TARGET)/common-lib -g -c -o $(SQLITE_OUT)/NativeDB.o $(SRC)/org/sqlite/core/NativeDB.c
+	$(CPP) $(CCFLAGS) -o $@ $(SQLITE_OUT)/madras_sql_dv1.o $(SQLITE_OUT)/NativeDB.o $(SQLITE_OBJ) $(LINKFLAGS)
 # Workaround for strip Protocol error when using VirtualBox on Mac
 	cp $@ /tmp/$(@F)
 	$(STRIP) /tmp/$(@F)
@@ -120,7 +132,9 @@ NATIVE_TARGET_DIR:=$(TARGET)/classes/org/sqlite/native/$(OS_NAME)/$(OS_ARCH)
 NATIVE_DLL:=$(NATIVE_DIR)/$(LIBNAME)
 
 # For cross-compilation, install docker. See also https://github.com/dockcross/dockcross
-native-all: native win32 win64 win-armv7 win-arm64 mac64-signed mac-arm64-signed linux32 linux64 freebsd32 freebsd64 freebsd-arm64 linux-arm linux-armv6 linux-armv7 linux-arm64 linux-android-arm linux-android-arm64 linux-android-x86 linux-android-x64 linux-ppc64 linux-musl32 linux-musl64 linux-musl-arm64
+native-all: mac64-signed
+
+rest: linux64 win32 win64 win-armv7 win-arm64 mac-arm64-signed linux32 freebsd32 freebsd64 freebsd-arm64 linux-arm linux-armv6 linux-armv7 linux-arm64 linux-android-arm linux-android-arm64 linux-android-x86 linux-android-x64 linux-ppc64 linux-musl32 linux-musl64 linux-musl-arm64
 
 native: $(NATIVE_DLL)
 
@@ -146,7 +160,8 @@ linux32: $(SQLITE_UNPACKED) jni-header
 	docker run $(DOCKER_RUN_OPTS) -v $$PWD:/work xerial/centos5-linux-x86 bash -c 'make clean-native native OS_NAME=Linux OS_ARCH=x86'
 
 linux64: $(SQLITE_UNPACKED) jni-header
-	docker run $(DOCKER_RUN_OPTS) -v $$PWD:/work xerial/centos5-linux-x86_64 bash -c 'make clean-native native OS_NAME=Linux OS_ARCH=x86_64'
+	docker build -t xerial:linux_x86_64 -f docker/Dockerfile.linux_x86_64 .
+	docker run $(DOCKER_RUN_OPTS) -v $$PWD:/work xerial:linux_x86_64 bash -c 'make clean-native native OS_NAME=Linux OS_ARCH=x86_64'
 
 freebsd32: $(SQLITE_UNPACKED) jni-header
 	docker run $(DOCKER_RUN_OPTS) -v $$PWD:/workdir empterdose/freebsd-cross-build:9.3 sh -c 'apk add bash; apk add openjdk8; apk add perl; make clean-native native OS_NAME=FreeBSD OS_ARCH=x86 CROSS_PREFIX=i386-freebsd9-'

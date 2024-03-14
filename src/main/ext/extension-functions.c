@@ -1856,15 +1856,6 @@ int RegisterExtensionFunctions(sqlite3 *db){
   return 0;
 }
 
-#ifdef COMPILE_SQLITE_EXTENSIONS_AS_LOADABLE_MODULE
-int sqlite3_extension_init(
-    sqlite3 *db, char **pzErrMsg, const sqlite3_api_routines *pApi){
-  SQLITE_EXTENSION_INIT2(pApi);
-  RegisterExtensionFunctions(db);
-  return 0;
-}
-#endif /* COMPILE_SQLITE_EXTENSIONS_AS_LOADABLE_MODULE */
-
 map map_make(cmp_func cmp){
   map r;
   r.cmp=cmp;

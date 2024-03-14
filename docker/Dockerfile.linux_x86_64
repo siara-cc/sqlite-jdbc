@@ -1,6 +1,7 @@
-FROM centos:5
+FROM centos:7
 MAINTAINER Taro L. Saito <leo@xerial.org>
 
-RUN yum -y install gcc make perl
+RUN yum -y install gcc make perl gcc-c++
+#RUN yum groupinstall 'Development Tools'
 
 WORKDIR /work
