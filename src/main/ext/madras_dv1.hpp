@@ -1,6 +1,7 @@
 #ifndef STATIC_DICT_H
 #define STATIC_DICT_H
 
+#include <math.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -37,6 +38,18 @@ namespace madras_dv1 {
 #define DCT_S64_DEC7 '7'
 #define DCT_S64_DEC8 '8'
 #define DCT_S64_DEC9 '9'
+#define DCT_U64_INT 'i'
+#define DCT_U64_DEC1 'j'
+#define DCT_U64_DEC2 'k'
+#define DCT_U64_DEC3 'l'
+#define DCT_U64_DEC4 'm'
+#define DCT_U64_DEC5 'n'
+#define DCT_U64_DEC6 'o'
+#define DCT_U64_DEC7 'p'
+#define DCT_U64_DEC8 'q'
+#define DCT_U64_DEC9 'r'
+#define DCT_U15_DEC1 'X'
+#define DCT_U15_DEC2 'Z'
 
 #define bm_init_mask 0x0000000000000001UL
 #define sel_divisor 512
@@ -114,6 +127,7 @@ static void dict_printf(const char* format, ...) {
   va_end(args);
 }
 
+constexpr double dbl_div[] = {1.0000000000001, 10.0000000000001, 100.0000000000001, 1000.0000000000001, 10000.0000000000001, 100000.0000000000001, 1000000.0000000000001, 10000000.0000000000001, 100000000.0000000000001, 1000000000.0000000000001};
 class cmn {
   public:
     static int compare(const uint8_t *v1, int len1, const uint8_t *v2,
@@ -176,19 +190,49 @@ class cmn {
       return ret;
     }
     static int read_svint60_len(uint8_t *ptr) {
-      return 1 + ((*ptr >>4) & 0x07);
+      return 1 + ((*ptr >> 4) & 0x07);
     }
     static int64_t read_svint60(uint8_t *ptr) {
       int64_t ret = *ptr & 0x0F;
-      if ((*ptr & 0x80) == 0x00)
-        ret *= -1;
+      bool is_neg = true;
+      if (*ptr & 0x80)
+        is_neg = false;
       int len = (*ptr >> 4) & 0x07;
       while (len--) {
         ret <<= 8;
         ptr++;
-        ret += *ptr;
+        ret |= *ptr;
+      }
+      return is_neg ? -ret : ret;
+    }
+    static int read_svint61_len(uint8_t *ptr) {
+      return 1 + (*ptr >> 5);
+    }
+    static uint64_t read_svint61(uint8_t *ptr) {
+      uint64_t ret = *ptr & 0x1F;
+      int len = (*ptr >> 5);
+      while (len--) {
+        ret <<= 8;
+        ptr++;
+        ret |= *ptr;
       }
       return ret;
+    }
+    static int read_svint15_len(uint8_t *ptr) {
+      return 1 + (*ptr >> 7);
+    }
+    static uint64_t read_svint15(uint8_t *ptr) {
+      uint64_t ret = *ptr & 0x7F;
+      int len = (*ptr >> 7);
+      while (len--) {
+        ret <<= 8;
+        ptr++;
+        ret |= *ptr;
+      }
+      return ret;
+    }
+    static size_t pow10(int p) {
+      return dbl_div[p];
     }
     static uint32_t min(uint32_t v1, uint32_t v2) {
       return v1 < v2 ? v1 : v2;
@@ -461,11 +505,15 @@ class grp_ptr_data_map {
         ptr = read_ptr_from_idx(grp_no, ptr);
       uint8_t *val_loc = grp_data[grp_no] + ptr;
       int8_t len_of_len = 0;
-      int val_len;
+      int val_len = 0;
       if (data_type == DCT_TEXT || data_type == DCT_BIN)
         val_len = cmn::read_vint32(val_loc, &len_of_len);
-      else
+      else if (data_type == DCT_S64_INT || (data_type >= DCT_S64_DEC1 && data_type <= DCT_S64_DEC9))
         val_len = cmn::read_svint60_len(val_loc);
+      else if (data_type == DCT_U64_INT || (data_type >= DCT_U64_DEC1 && data_type <= DCT_U64_DEC9))
+        val_len = cmn::read_svint61_len(val_loc);
+      else if (data_type >= DCT_U15_DEC1 && data_type <= DCT_U15_DEC2)
+        val_len = cmn::read_svint15_len(val_loc);
       //val_len = cmn::min(*in_size_out_value_len, val_len);
       *in_size_out_value_len = val_len;
       memcpy(ret_val, val_loc + len_of_len, val_len);
@@ -794,14 +842,19 @@ class dict_iter_ctx {
     bool to_skip_first_leaf;
     bool is_allocated = false;
     dict_iter_ctx() {
+      is_allocated = false;
     }
     ~dict_iter_ctx() {
+      close();
+    }
+    void close() {
       if (is_allocated) {
         delete key;
         delete node_path;
         delete child_count;
         delete last_tail_len;
       }
+      is_allocated = false;
     }
     void init(uint16_t max_key_len, uint16_t max_level) {
       if (!is_allocated) {
@@ -822,14 +875,12 @@ class dict_iter_ctx {
 class static_dict {
 
   private:
-    uint8_t *dict_buf;
     uint8_t *val_buf;
     size_t dict_size;
     size_t val_size;
     bool is_mmapped;
 
     uint32_t node_count;
-    uint32_t val_count;
     uint32_t common_node_count;
     uint32_t key_count;
     uint32_t max_val_len;
@@ -846,8 +897,6 @@ class static_dict {
     uint8_t *child_select_lkup_loc;
     uint8_t *leaf_select_lkup_loc;
     uint8_t *trie_loc;
-    uint8_t *col_names_pos;
-    uint8_t *col_names_loc;
     uint8_t *val_table_loc;
 
     bv_lookup_tbl term_lt;
@@ -858,6 +907,10 @@ class static_dict {
     static_dict& operator=(static_dict const&);
 
   public:
+    uint8_t *dict_buf;
+    uint32_t val_count;
+    uint8_t *names_pos;
+    char *names_loc;
     uint32_t last_exit_loc;
     min_pos_stats min_stats;
     uint8_t *sec_cache_loc;
@@ -865,6 +918,10 @@ class static_dict {
     grp_ptr_data_map *val_map;
     uint32_t max_key_len;
     static_dict() {
+      init_vars();
+    }
+
+    void init_vars() {
       dict_buf = NULL;
       val_buf = NULL;
       val_map = NULL;
@@ -893,8 +950,8 @@ class static_dict {
     void load_into_vars() {
 
       val_count = cmn::read_uint16(dict_buf + 4);
-      col_names_pos = dict_buf + cmn::read_uint32(dict_buf + 6);
-      col_names_loc = col_names_pos + val_count * sizeof(uint16_t);
+      names_pos = dict_buf + cmn::read_uint32(dict_buf + 6);
+      names_loc = (char *) names_pos + (val_count + 2) * sizeof(uint16_t);
       val_table_loc = dict_buf + cmn::read_uint32(dict_buf + 10);
       node_count = cmn::read_uint32(dict_buf + 14);
       bv_block_count = node_count / nodes_per_bv_block;
@@ -986,6 +1043,7 @@ class static_dict {
 
     void load(const char* filename) {
 
+      init_vars();
       struct stat file_stat;
       memset(&file_stat, '\0', sizeof(file_stat));
       stat(filename, &file_stat);
@@ -1167,7 +1225,7 @@ class static_dict {
 
     template<typename INS_ARR_T>
     void insert_arr(INS_ARR_T *arr, int arr_len, int pos, INS_ARR_T val) {
-      for (int i = pos; i < arr_len; i++)
+      for (int i = arr_len - 1; i >= pos; i--)
         arr[i + 1] = arr[i];
       arr[pos] = val;
     }
@@ -1321,24 +1379,23 @@ class static_dict {
       return true;
     }
 
-    dict_iter_ctx find_first(const uint8_t *prefix, int prefix_len) {
+    bool find_first(const uint8_t *prefix, int prefix_len, dict_iter_ctx& ctx) {
       int cmp;
       uint32_t lkup_node_id;
       lookup(prefix, prefix_len, lkup_node_id, &cmp);
-      dict_iter_ctx ctx;
-      ctx.init(max_key_len, max_level);
       uint8_t key_buf[max_key_len];
       int key_len;
       // TODO: set last_key_len
-      ctx.cur_idx = -1;
+      ctx.cur_idx = 0;
       reverse_lookup_from_node_id(lkup_node_id, &key_len, key_buf, NULL, NULL, &ctx);
-      // for (int i = 0; i < ctx.key.size(); i++)
+      ctx.cur_idx--;
+      // for (int i = 0; i < ctx.key_len; i++)
       //   printf("%c", ctx.key[i]);
       // printf("\nlsat tail len: %d\n", ctx.last_tail_len[ctx.cur_idx]);
       ctx.key_len -= ctx.last_tail_len[ctx.cur_idx];
       ctx.last_tail_len[ctx.cur_idx] = 0;
       ctx.to_skip_first_leaf = false;
-      return ctx;
+      return true;
     }
 
     uint8_t *get_trie_loc() {
@@ -1351,8 +1408,30 @@ class static_dict {
 
     double get_val_int60_dbl(uint8_t *val, char type) {
       int64_t i64 = cmn::read_svint60(val);
-      double ret = i64;
-      i64 /= (type - DCT_S64_DEC1 + 1);
+      double ret = static_cast<double>(i64);
+      ret /= cmn::pow10(type - DCT_S64_DEC1 + 1);
+      return ret;
+    }
+
+    uint64_t get_val_int61(uint8_t *val) {
+      return cmn::read_svint61(val);
+    }
+
+    double get_val_int61_dbl(uint8_t *val, char type) {
+      uint64_t i64 = cmn::read_svint61(val);
+      double ret = static_cast<double>(i64);
+      ret /= cmn::pow10(type - DCT_U64_DEC1 + 1);
+      return ret;
+    }
+
+    uint64_t get_val_int15(uint8_t *val) {
+      return cmn::read_svint15(val);
+    }
+
+    double get_val_int15_dbl(uint8_t *val, char type) {
+      uint64_t i64 = cmn::read_svint15(val);
+      double ret = static_cast<double>(i64);
+      ret /= cmn::pow10(type - DCT_U15_DEC1 + 1);
       return ret;
     }
 
